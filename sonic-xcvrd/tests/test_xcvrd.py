@@ -2435,6 +2435,8 @@ class TestXcvrdScript(object):
         assert task.is_cmis_application_update_required(mock_xcvr_api, app_new, host_lanes_mask) == expected
 
     @pytest.mark.parametrize("ifname, expected", [
+        ('1.6TBASE-CR8 (Clause179)', 1600000),
+        ('1.6TAUI-8 (Annex176E)', 1600000),
         ('800G L C2M', 800000),
         ('400G CR8', 400000),
         ('200GBASE-CR4 (Clause 136)', 200000),
@@ -3427,9 +3429,7 @@ class TestXcvrdScript(object):
         # Force config status check to failed
         mock_xcvr_api.get_config_datapath_hostlane_status.return_value = gen_cmis_config_status_dict('ConfigRejected')
         mock_xcvr_api.get_datapath_state = MagicMock(return_value=gen_cmis_dp_state_dict('DataPathDeactivated'))
-        mock_xcvr_api.get_datapath_init_duration = MagicMock(return_value=0)
-        mock_xcvr_api.get_module_pwr_up_duration = MagicMock(return_value=0)
-        mock_xcvr_api.get_datapath_deinit_duration = MagicMock(return_value=0)
+        task.is_timer_expired = MagicMock(return_value=True)
 
         # Insert 1st subport event
         port_change_event = PortChangeEvent('Ethernet0', physical_port_idx, 0, PortChangeEvent.PORT_SET, {'speed':'100000', 'lanes':'1,2', 'subport': '1'})

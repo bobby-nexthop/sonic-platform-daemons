@@ -119,6 +119,7 @@ helper_logger = syslogger.SysLogger(SYSLOG_IDENTIFIER, enable_runtime_config=Tru
 #
 # Helper functions =============================================================
 #
+
 def _wrapper_is_replaceable(physical_port):
     if platform_chassis is not None:
         try:
