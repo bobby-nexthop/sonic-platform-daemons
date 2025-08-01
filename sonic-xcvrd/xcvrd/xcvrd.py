@@ -253,7 +253,65 @@ def waiting_time_compensation_with_sleep(time_start, time_to_wait):
 
 # Delete port from SFP status table
 
-        is_warm_start = xcvrd_common.is_warm_reboot_enabled()
+# Thread wrapper class to update sfp state info periodically
+
+
+class SfpStateUpdateTask(threading.Thread):
+    RETRY_EEPROM_READING_INTERVAL = 60
+    def __init__(self, namespaces, port_mapping, sfp_obj_dict, main_thread_stop_event, sfp_error_event):
+        threading.Thread.__init__(self)
+        self.name = "SfpStateUpdateTask"
+        self.exc = None
+        self.task_stopping_event = threading.Event()
+        self.main_thread_stop_event = main_thread_stop_event
+        self.sfp_error_event = sfp_error_event
+        self.port_mapping = copy.deepcopy(port_mapping)
+        # A set to hold those logical port name who fail to read EEPROM
+        self.retry_eeprom_set = set()
+        # To avoid retry EEPROM read too fast, record the last EEPROM read timestamp in this member
+        self.last_retry_eeprom_time = 0
+        # A dict to hold SFP error event, for SFP insert/remove event, it is not necessary to cache them
+        # because _wrapper_get_presence returns the SFP presence status
+        self.sfp_error_dict = {}
+        self.sfp_insert_events = {}
+        self.namespaces = namespaces
+        self.sfp_obj_dict = sfp_obj_dict
+        self.logger = syslogger.SysLogger(SYSLOG_IDENTIFIER_SFPSTATEUPDATETASK, enable_runtime_config=True)
+        self.xcvr_table_helper = XcvrTableHelper(self.namespaces)
+        self.dom_db_utils = DOMDBUtils(sfp_obj_dict, self.port_mapping, self.xcvr_table_helper, self.task_stopping_event, self.logger)
+        self.vdm_db_utils = VDMDBUtils(sfp_obj_dict, self.port_mapping, self.xcvr_table_helper, self.task_stopping_event, self.logger)
+
+    def _mapping_event_from_change_event(self, status, port_dict):
+        """
+        mapping from what get_transceiver_change_event returns to event defined in the state machine
+        the logic is pretty straightforword
+        """
+        if status:
+            if bool(port_dict):
+                event = NORMAL_EVENT
+            else:
+                event = SYSTEM_BECOME_READY
+                # here, a simple timeout event whose port_dict is empty is mapped
+                # into a SYSTEM_BECOME_READY event so that it can be handled
+                port_dict[EVENT_ON_ALL_SFP] = SYSTEM_BECOME_READY
+        else:
+            if EVENT_ON_ALL_SFP in port_dict.keys():
+                event = port_dict[EVENT_ON_ALL_SFP]
+            else:
+                # this should not happen. just for protection
+                event = SYSTEM_FAIL
+                port_dict[EVENT_ON_ALL_SFP] = SYSTEM_FAIL
+
+        helper_logger.log_debug("mapping from {} {} to {}".format(status, port_dict, event))
+        return event
+
+    # Update port sfp info and dom threshold in db during xcvrd bootup
+    def _post_port_sfp_info_and_dom_thr_to_db_once(self, port_mapping, xcvr_table_helper, stop_event=threading.Event()):
+        # Connect to STATE_DB and create transceiver dom/sfp info tables
+        transceiver_dict = {}
+        retry_eeprom_set = set()
+
+        is_warm_start = common.is_warm_reboot_enabled()
         # Post all the current interface sfp/dom threshold info to STATE_DB
         logical_port_list = port_mapping.logical_port_list
         for logical_port_name in logical_port_list:
@@ -1066,7 +1124,7 @@ class DaemonXcvrd(daemon_base.DaemonBase):
         # Start the CMIS manager
         cmis_manager = None
         if not self.skip_cmis_mgr:
-            cmis_manager = CmisManagerTask(self.namespaces, port_mapping_data, self.stop_event, skip_cmis_mgr=self.skip_cmis_mgr, platform_chassis=platform_chassis)
+            cmis_manager = CmisManagerTask(self.namespaces, port_mapping_data, self.stop_event, self.skip_cmis_mgr, platform_chassis)
             cmis_manager.start()
             self.threads.append(cmis_manager)
 

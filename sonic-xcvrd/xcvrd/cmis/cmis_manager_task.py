@@ -1,40 +1,9 @@
-#!/usr/bin/env python3
 
-"""
-    cmis_manager_task
-    CMIS transceiver management task for SONiC
-"""
-
-try:
-    import threading
-    import time
-    import datetime
-    from swsscommon import swsscommon
-    from sonic_py_common import syslogger, daemon_base
-    from sonic_platform_base.sonic_xcvr.api.public.c_cmis import CmisApi
-
-    from ..xcvrd_utilities import common
-    from ..xcvrd_utilities.common import (
-        CMIS_STATE_UNKNOWN, CMIS_STATE_INSERTED, CMIS_STATE_DP_PRE_INIT_CHECK,
-        CMIS_STATE_DP_DEINIT, CMIS_STATE_AP_CONF, CMIS_STATE_DP_ACTIVATE,
-        CMIS_STATE_DP_INIT, CMIS_STATE_DP_TXON, CMIS_STATE_READY,
-        CMIS_STATE_REMOVED, CMIS_STATE_FAILED, CMIS_TERMINAL_STATES
-    )
-    from ..xcvrd_utilities.xcvr_table_helper import XcvrTableHelper
-    from ..xcvrd_utilities import port_event_helper
-    from ..xcvrd_utilities.port_event_helper import PortChangeObserver
-    from ..xcvrd_utilities import media_settings_parser
-    from ..xcvrd_utilities import optics_si_parser
-    from ..xcvrd_utilities import sfp_status_helper
-
-except ImportError as e:
-    raise ImportError(str(e) + " - required module not found")
-
-# Constants
-SYSLOG_IDENTIFIER_CMIS = "CmisManagerTask"
 
 # Global logger instance
 helper_logger = syslogger.SysLogger(SYSLOG_IDENTIFIER_CMIS, enable_runtime_config=True)
+
+
 
 # Thread wrapper class for CMIS transceiver management
 
@@ -47,7 +16,7 @@ class CmisManagerTask(threading.Thread):
     CMIS_EXPIRATION_BUFFER_MS = 2
     ALL_LANES_MASK = 0xff
 
-    def __init__(self, namespaces, port_mapping, main_thread_stop_event, skip_cmis_mgr=False, platform_chassis=None):
+    def __init__(self, namespaces, port_mapping, main_thread_stop_event, platform_chassis, skip_cmis_mgr=False):
         threading.Thread.__init__(self)
         self.name = "CmisManagerTask"
         self.exc = None
@@ -63,13 +32,13 @@ class CmisManagerTask(threading.Thread):
         self.xcvr_table_helper = XcvrTableHelper(self.namespaces)
 
     def log_debug(self, message):
-        helper_logger.log_debug(message)
+        helper_logger.log_debug("CMIS: {}".format(message))
 
     def log_notice(self, message):
-        helper_logger.log_notice(message)
+        helper_logger.log_notice("CMIS: {}".format(message))
 
     def log_error(self, message):
-        helper_logger.log_error(message)
+        helper_logger.log_error("CMIS: {}".format(message))
 
     def get_asic_id(self, lport):
         return self.port_dict.get(lport, {}).get("asic_id", -1)
@@ -188,29 +157,7 @@ class CmisManagerTask(threading.Thread):
     def get_cmis_module_power_down_duration_secs(self, api):
         return api.get_module_pwr_down_duration()/1000
 
-    def get_host_lane_count(self, lport, port_config_lanes, gearbox_lanes_dict):
-        """
-        Get host lane count from gearbox configuration if available, otherwise from port config
-
-        Args:
-            lport: logical port name (e.g., "Ethernet0")
-            port_config_lanes: lanes string from port config (e.g., "25,26,27,28")
-            gearbox_lanes_dict: dictionary of gearbox line lanes counts
-
-        Returns:
-            Integer: number of host lanes
-        """
-        # First try to get from gearbox configuration
-        gearbox_host_lane_count = gearbox_lanes_dict.get(lport, 0)
-        if gearbox_host_lane_count > 0:
-            self.log_debug("{}: Using gearbox line lanes count: {}".format(lport, gearbox_host_lane_count))
-            return gearbox_host_lane_count
-
-        # Fallback to port config lanes
-        host_lane_count = len(port_config_lanes.split(','))
-        self.log_debug("{}: Using port config lanes count: {}".format(lport, host_lane_count))
-        return host_lane_count
-
+>>>>>>> 77b86d4 (Move CmisManagerTask into it's own module)
     def get_cmis_host_lanes_mask(self, api, appl, host_lane_count, subport):
         """
         Retrieves mask of active host lanes based on appl, host lane count and subport
@@ -718,9 +665,6 @@ class CmisManagerTask(threading.Thread):
             # Handle port change event from main thread
             port_change_observer.handle_port_update_event()
 
-            # Cache gearbox line lanes dictionary for this set of iterations over the port_dict
-            gearbox_lanes_dict = self.xcvr_table_helper.get_gearbox_line_lanes_dict()
-
             for lport, info in self.port_dict.items():
                 if self.task_stopping_event.is_set():
                     break
@@ -752,7 +696,7 @@ class CmisManagerTask(threading.Thread):
 
                 # Desired port speed on the host side
                 host_speed = speed
-                host_lane_count = self.get_host_lane_count(lport, lanes, gearbox_lanes_dict)
+                host_lane_count = len(lanes.split(','))
 
                 # double-check the HW presence before moving forward
                 sfp = self.platform_chassis.get_sfp(pport)
@@ -923,7 +867,7 @@ class CmisManagerTask(threading.Thread):
 
                         need_update = self.is_cmis_application_update_required(api, appl, host_lanes_mask)
 
-                        # For ZR module, Datapath needs to be re-initialized on new channel selection
+                        # For ZR module, Datapath needes to be re-initlialized on new channel selection
                         if api.is_coherent_module():
                             freq = self.port_dict[lport]['laser_freq']
                             # If user requested frequency is NOT the same as configured on the module
@@ -989,7 +933,7 @@ class CmisManagerTask(threading.Thread):
                         # Skip rest if it's in decommission state machine
                         if not self.is_decomm_pending(lport):
                             if api.is_coherent_module():
-                                # For ZR module, configure the laser frequency when Datapath is in Deactivated state
+                            # For ZR module, configure the laser frequency when Datapath is in Deactivated state
                                 freq = self.port_dict[lport]['laser_freq']
                                 if 0 != freq:
                                     if 1 != self.configure_laser_frequency(api, lport, freq):

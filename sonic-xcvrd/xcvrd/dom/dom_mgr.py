@@ -22,7 +22,8 @@ try:
     from xcvrd.xcvrd_utilities import sfp_status_helper
     from xcvrd.xcvrd_utilities.xcvr_table_helper import *
     from xcvrd.xcvrd_utilities import port_event_helper
-    from xcvrd.xcvrd_utilities import xcvrd_common
+    from xcvrd.xcvrd_utilities import common
+    from xcvrd.xcvrd_utilities.common import CMIS_TERMINAL_STATES
     from xcvrd.dom.utilities.dom_sensor.db_utils import DOMDBUtils
     from xcvrd.dom.utilities.vdm.utils import VDMUtils
     from xcvrd.dom.utilities.vdm.db_utils import VDMDBUtils
@@ -130,8 +131,8 @@ class DomInfoUpdateTask(threading.Thread):
             self.log_warning("Got invalid asic index for {} while checking cmis init status".format(logical_port_name))
             return False
 
-        cmis_state = xcvrd_common.get_cmis_state_from_state_db(logical_port_name, self.xcvr_table_helper.get_status_sw_tbl(asic_index))
-        if cmis_state not in xcvrd.CMIS_TERMINAL_STATES:
+        cmis_state = common.get_cmis_state_from_state_db(logical_port_name, self.xcvr_table_helper.get_status_sw_tbl(asic_index))
+        if cmis_state not in CMIS_TERMINAL_STATES:
             return True
         else:
             return False
