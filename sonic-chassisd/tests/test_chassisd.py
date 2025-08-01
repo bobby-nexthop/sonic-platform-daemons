@@ -136,6 +136,47 @@ def test_moduleupdater_check_phyentity_fields():
     assert model == fvs[CHASSIS_MODULE_INFO_MODEL_FIELD]
     assert str(replaceable) == fvs[CHASSIS_MODULE_INFO_REPLACEABLE_FIELD]
 
+def test_moduleupdater_check_phyentity_entry_after_fabric_removal():
+    chassis = MockChassis()
+    index = 0
+    name = "FABRIC-CARD0"
+    desc = "Switch Fabric Module"
+    slot = 10
+    serial = "FC1000101"
+    module_type = ModuleBase.MODULE_TYPE_FABRIC
+    module = MockModule(index, name, desc, module_type, slot, serial)
+    replaceable = True
+    presence = True
+    model = 'N/A'
+    parent_name = 'chassis 1'
+
+    # Set initial state
+    status = ModuleBase.MODULE_STATUS_ONLINE
+    module.set_oper_status(status)
+    module.set_replaceable(replaceable)
+    module.set_presence(presence)
+    module.set_model(model)
+
+    chassis.module_list.append(module)
+
+    module_updater = ModuleUpdater(SYSLOG_IDENTIFIER, chassis, slot,
+                                   module.supervisor_slot)
+    module_updater.module_db_update()
+    fvs = module_updater.phy_entity_table.get(name)
+    if isinstance(fvs, list):
+        fvs = dict(fvs[-1])
+    assert str(index) == fvs['position_in_parent']
+    assert parent_name == fvs['parent_name']
+    assert serial == fvs[CHASSIS_MODULE_INFO_SERIAL_FIELD]
+    assert model == fvs[CHASSIS_MODULE_INFO_MODEL_FIELD]
+    assert str(replaceable) == fvs[CHASSIS_MODULE_INFO_REPLACEABLE_FIELD]
+
+    presence = False
+    module.set_presence(presence)
+    module_updater.module_db_update()
+    fvs = module_updater.phy_entity_table.get(name)
+    assert fvs == None
+    
 def test_smartswitch_moduleupdater_check_valid_fields():
     chassis = MockSmartSwitchChassis()
     index = 0
@@ -182,15 +223,13 @@ def test_smartswitch_moduleupdater_status_transitions():
     module_updater = SmartSwitchModuleUpdater(SYSLOG_IDENTIFIER, chassis)
 
     # Mock dependent methods
-    with patch.object(module_updater, 'retrieve_dpu_reboot_time', return_value="2024-11-19T00:00:00") \
-            as mock_retrieve_reboot_time, \
-         patch.object(module_updater, '_is_first_boot', return_value=False) as mock_is_first_boot, \
-         patch.object(module_updater, 'persist_dpu_reboot_cause') as mock_persist_reboot_cause, \
-         patch.object(module_updater, 'update_dpu_reboot_cause_to_db') as mock_update_reboot_db, \
-         patch("os.makedirs") as mock_makedirs, \
-         patch("builtins.open", mock_open()) as mock_file, \
-         patch.object(module_updater, '_get_history_path',
-                      return_value="/tmp/prev_reboot_time.txt") as mock_get_history_path:
+    with patch.object(module_updater, 'retrieve_dpu_reboot_info', return_value=("Switch rebooted DPU", "2023_01_01_00_00_00")) as mock_reboot_info, \
+        patch.object(module_updater, '_is_first_boot', return_value=False) as mock_is_first_boot, \
+        patch.object(module_updater, 'persist_dpu_reboot_cause') as mock_persist_reboot_cause, \
+        patch.object(module_updater, 'update_dpu_reboot_cause_to_db') as mock_update_reboot_db, \
+        patch("os.makedirs") as mock_makedirs, \
+        patch("builtins.open", mock_open()) as mock_file, \
+        patch.object(module_updater, '_get_history_path', return_value="/tmp/prev_reboot_time.txt") as mock_get_history_path:
 
         # Transition from ONLINE to OFFLINE
         offline_status = ModuleBase.MODULE_STATUS_OFFLINE
@@ -213,6 +252,59 @@ def test_smartswitch_moduleupdater_status_transitions():
         # Validate mock calls for ONLINE transition
         mock_persist_reboot_cause.assert_called_once()
         mock_update_reboot_db.assert_called_once()
+
+def test_online_transition_skips_reboot_update():
+    chassis = MockSmartSwitchChassis()
+    index = 0
+    name = "DPU0"
+    module = MockModule(index, name, "DPU", ModuleBase.MODULE_TYPE_DPU, 0, "SN123")
+    module.set_oper_status(ModuleBase.MODULE_STATUS_OFFLINE)
+    chassis.module_list.append(module)
+
+    updater = SmartSwitchModuleUpdater(SYSLOG_IDENTIFIER, chassis)
+
+    # Mock the module going ONLINE
+    module.set_oper_status(ModuleBase.MODULE_STATUS_ONLINE)
+
+    with patch.object(updater, 'retrieve_dpu_reboot_info',
+                      return_value=("Switch rebooted DPU", datetime.now(timezone.utc).strftime("%Y_%m_%d_%H_%M_%S"))), \
+         patch.object(module, 'get_reboot_cause', return_value="Switch rebooted DPU"), \
+         patch.object(updater, '_is_first_boot', return_value=False), \
+         patch.object(updater, 'persist_dpu_reboot_cause') as mock_persist, \
+         patch.object(updater, 'update_dpu_reboot_cause_to_db') as mock_update, \
+         patch("builtins.open", mock_open()), \
+         patch("os.makedirs"), \
+         patch.object(updater, '_get_history_path', return_value="/tmp/fake.json"):
+
+        updater.module_db_update()
+
+        # Ensure no reboot update due to is_reboot = True
+        mock_persist.assert_not_called()
+        mock_update.assert_not_called()
+
+def test_retrieve_dpu_reboot_info_success():
+    class DummyChassis:
+        def get_num_modules(self): return 0
+        def init_midplane_switch(self): return False
+
+    updater = SmartSwitchModuleUpdater(SYSLOG_IDENTIFIER, DummyChassis())
+    sample_json = {"cause": "Switch rebooted DPU", "name": "2025_06_25_17_18_52"}
+    with patch("os.path.exists", return_value=True), \
+         patch("builtins.open", mock_open(read_data=json.dumps(sample_json))):
+        cause, time_str = updater.retrieve_dpu_reboot_info("dpu0")
+        assert cause == "Switch rebooted DPU"
+        assert time_str == "2025_06_25_17_18_52"
+
+def test_retrieve_dpu_reboot_info_file_missing():
+    class DummyChassis:
+        def get_num_modules(self): return 0
+        def init_midplane_switch(self): return False  # required for SmartSwitchModuleUpdater
+
+    updater = SmartSwitchModuleUpdater(SYSLOG_IDENTIFIER, DummyChassis())
+    with patch("os.path.exists", return_value=False):
+        cause, time_str = updater.retrieve_dpu_reboot_info("dpu0")
+        assert cause is None
+        assert time_str is None
 
 def test_smartswitch_moduleupdater_check_invalid_name():
     chassis = MockSmartSwitchChassis()

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 """
-    xcvrd_common
+    common
     Common utilities for xcvrd daemon components
 """
 
@@ -17,19 +17,18 @@ try:
 except ImportError as e:
     raise ImportError(str(e) + " - required module not found")
 
-SYSLOG_IDENTIFIER = "xcvrd_common"
+SYSLOG_IDENTIFIER_COMMON = "common"
 
 # Global variables that will be injected from the parent module
 platform_chassis = None
 platform_sfputil = None
-helper_logger = syslogger.SysLogger(SYSLOG_IDENTIFIER, enable_runtime_config=True)
+helper_logger = syslogger.SysLogger(SYSLOG_IDENTIFIER_COMMON, enable_runtime_config=True)
 
-def init_globals(chassis, sfputil, logger):
+def init_globals(chassis, sfputil):
     """Initialize global variables with injected dependencies"""
     global platform_chassis, platform_sfputil, helper_logger
     platform_chassis = chassis
     platform_sfputil = sfputil
-    helper_logger = logger
 
 def log_exception_traceback():
     """Log exception traceback using the helper logger"""
@@ -91,7 +90,9 @@ def get_interface_speed(ifname):
     """
     # see HOST_ELECTRICAL_INTERFACE of sff8024.py
     speed = 0
-    if '800G' in ifname:
+    if '1.6T' in ifname:
+        speed = 1600000
+    elif '800G' in ifname:
         speed = 800000
     elif '400G' in ifname:
         speed = 400000
