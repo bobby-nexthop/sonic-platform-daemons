@@ -26,16 +26,16 @@ try:
     from sonic_py_common import multi_asic
     from swsscommon import swsscommon
 
-    from .xcvrd_utilities import sfp_status_helper
+    from .util import sfp_status_helper
     from .sff_mgr import SffManagerTask
     from .dom.dom_mgr import DomInfoUpdateTask
     from .cmis.cmis_manager_task import CmisManagerTask
-    from .xcvrd_utilities.xcvr_table_helper import *
-    from .xcvrd_utilities import port_event_helper
-    from .xcvrd_utilities.port_event_helper import PortChangeObserver
-    from .xcvrd_utilities import media_settings_parser
-    from .xcvrd_utilities import optics_si_parser
-    from .xcvrd_utilities import common
+    from .util.xcvr_table_helper import *
+    from .util import port_event_helper
+    from .util.port_event_helper import PortChangeObserver
+    from .util import media_settings_parser
+    from .util import optics_si_parser
+    from .util import common
     from xcvrd.dom.utilities.dom_sensor.db_utils import DOMDBUtils
     from xcvrd.dom.utilities.vdm.db_utils import VDMDBUtils
     

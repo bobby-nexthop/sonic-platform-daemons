@@ -1,6 +1,6 @@
 from datetime import datetime
 from swsscommon import swsscommon
-from xcvrd.xcvrd_utilities.utils import XCVRDUtils
+from xcvrd.util.utils import XCVRDUtils
 
 class DBUtils:
     """

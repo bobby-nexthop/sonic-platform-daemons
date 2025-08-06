@@ -19,16 +19,16 @@ try:
     from swsscommon import swsscommon
 
     from xcvrd import xcvrd
-    from xcvrd.xcvrd_utilities import sfp_status_helper
-    from xcvrd.xcvrd_utilities.xcvr_table_helper import *
-    from xcvrd.xcvrd_utilities import port_event_helper
-    from xcvrd.xcvrd_utilities import common
-    from xcvrd.xcvrd_utilities.common import CMIS_TERMINAL_STATES
+    from xcvrd.util import sfp_status_helper
+    from xcvrd.util.xcvr_table_helper import *
+    from xcvrd.util import port_event_helper
+    from xcvrd.util import common
+    from xcvrd.util.common import CMIS_TERMINAL_STATES
     from xcvrd.dom.utilities.dom_sensor.db_utils import DOMDBUtils
     from xcvrd.dom.utilities.vdm.utils import VDMUtils
     from xcvrd.dom.utilities.vdm.db_utils import VDMDBUtils
     from xcvrd.dom.utilities.status.db_utils import StatusDBUtils
-    from xcvrd.xcvrd_utilities.utils import XCVRDUtils
+    from xcvrd.util.utils import XCVRDUtils
 except ImportError as e:
     raise ImportError(str(e) + " - required module not found in dom_mgr.py")
 

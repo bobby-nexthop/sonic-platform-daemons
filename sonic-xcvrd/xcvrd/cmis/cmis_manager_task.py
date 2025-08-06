@@ -14,19 +14,19 @@ try:
     from sonic_py_common import syslogger, daemon_base
     from sonic_platform_base.sonic_xcvr.api.public.c_cmis import CmisApi
 
-    from ..xcvrd_utilities import common
-    from ..xcvrd_utilities.common import (
+    from ..util import common
+    from ..util.common import (
         CMIS_STATE_UNKNOWN, CMIS_STATE_INSERTED, CMIS_STATE_DP_PRE_INIT_CHECK,
         CMIS_STATE_DP_DEINIT, CMIS_STATE_AP_CONF, CMIS_STATE_DP_ACTIVATE,
         CMIS_STATE_DP_INIT, CMIS_STATE_DP_TXON, CMIS_STATE_READY,
         CMIS_STATE_REMOVED, CMIS_STATE_FAILED, CMIS_TERMINAL_STATES
     )
-    from ..xcvrd_utilities.xcvr_table_helper import XcvrTableHelper
-    from ..xcvrd_utilities import port_event_helper
-    from ..xcvrd_utilities.port_event_helper import PortChangeObserver
-    from ..xcvrd_utilities import media_settings_parser
-    from ..xcvrd_utilities import optics_si_parser
-    from ..xcvrd_utilities import sfp_status_helper
+    from ..util.xcvr_table_helper import XcvrTableHelper
+    from ..util import port_event_helper
+    from ..util.port_event_helper import PortChangeObserver
+    from ..util import media_settings_parser
+    from ..util import optics_si_parser
+    from ..util import sfp_status_helper
 
 except ImportError as e:
     raise ImportError(str(e) + " - required module not found")

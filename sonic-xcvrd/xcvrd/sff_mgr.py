@@ -12,8 +12,8 @@ try:
 
     from swsscommon import swsscommon
 
-    from .xcvrd_utilities.port_event_helper import PortChangeObserver
-    from .xcvrd_utilities.xcvr_table_helper import XcvrTableHelper
+    from .util.port_event_helper import PortChangeObserver
+    from .util.xcvr_table_helper import XcvrTableHelper
     from sonic_platform_base.sonic_xcvr.api.public.sff8472 import Sff8472Api
 except ImportError as e:
     raise ImportError(str(e) + " - required module not found")
