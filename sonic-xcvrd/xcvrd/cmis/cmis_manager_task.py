@@ -771,7 +771,6 @@ class CmisManagerTask(threading.Thread):
         self.update_port_transceiver_status_table_sw_cmis_state(lport, CMIS_STATE_DP_PRE_INIT_CHECK)
 
     def handle_cmis_dp_pre_init_check_state(self, lport):
-        # Retrieve needed variables from port_dict
         port_info = self.port_dict[lport]
         api = port_info.get('api')
         appl = port_info.get('appl', 0)
@@ -829,6 +828,30 @@ class CmisManagerTask(threading.Thread):
         self.log_notice("{}: force Datapath reinit".format(lport))
         self.update_port_transceiver_status_table_sw_cmis_state(lport, CMIS_STATE_DP_DEINIT)
 
+    def handle_cmis_dp_deinit_state(self, lport):
+        port_info = self.port_dict[lport]
+        api = port_info.get('api')
+        host_lanes_mask = port_info.get('host_lanes_mask', 0)
+        retries = port_info.get('cmis_retries', 0)
+
+        # D.2.2 Software Deinitialization
+        api.set_datapath_deinit(host_lanes_mask)
+
+        # D.1.3 Software Configuration and Initialization
+        media_lanes_mask = port_info['media_lanes_mask']
+        if not api.tx_disable_channel(media_lanes_mask, True):
+            self.log_notice("{}: unable to turn off tx power with host_lanes_mask {}".format(lport, host_lanes_mask))
+            port_info['cmis_retries'] = retries + 1
+            return
+
+        #Sets module to high power mode and doesn't impact datapath if module is already in high power mode
+        api.set_lpmode(False, wait_state_change = False)
+        self.update_port_transceiver_status_table_sw_cmis_state(lport, CMIS_STATE_AP_CONF)
+        dpDeinitDuration = self.get_cmis_dp_deinit_duration_secs(api)
+        modulePwrUpDuration = self.get_cmis_module_power_up_duration_secs(api)
+        self.log_notice("{}: DpDeinit duration {} secs, modulePwrUp duration {} secs".format(lport, dpDeinitDuration, modulePwrUpDuration))
+        self.update_cmis_state_expiration_time(lport, max(modulePwrUpDuration, dpDeinitDuration))
+
     def process_cmis_state_machine(self, lport):
         port_info = self.port_dict[lport]
         state = common.get_cmis_state_from_state_db(lport, self.xcvr_table_helper.get_status_sw_tbl(self.get_asic_id(lport)))
@@ -872,24 +895,7 @@ class CmisManagerTask(threading.Thread):
             if state == CMIS_STATE_DP_PRE_INIT_CHECK:
                 self.handle_cmis_dp_pre_init_check_state(lport)
             elif state == CMIS_STATE_DP_DEINIT:
-                # D.2.2 Software Deinitialization
-                api.set_datapath_deinit(host_lanes_mask)
-
-                # D.1.3 Software Configuration and Initialization
-                media_lanes_mask = self.port_dict[lport]['media_lanes_mask']
-                if not api.tx_disable_channel(media_lanes_mask, True):
-                    self.log_notice("{}: unable to turn off tx power with host_lanes_mask {}".format(lport, host_lanes_mask))
-                    self.port_dict[lport]['cmis_retries'] = retries + 1
-                    return
-
-                #Sets module to high power mode and doesn't impact datapath if module is already in high power mode
-                api.set_lpmode(False, wait_state_change = False)
-                self.update_port_transceiver_status_table_sw_cmis_state(lport, CMIS_STATE_AP_CONF)
-                dpDeinitDuration = self.get_cmis_dp_deinit_duration_secs(api)
-                modulePwrUpDuration = self.get_cmis_module_power_up_duration_secs(api)
-                self.log_notice("{}: DpDeinit duration {} secs, modulePwrUp duration {} secs".format(lport, dpDeinitDuration, modulePwrUpDuration))
-                self.update_cmis_state_expiration_time(lport, max(modulePwrUpDuration, dpDeinitDuration))
-
+                self.handle_cmis_dp_deinit_state(lport)
             elif state == CMIS_STATE_AP_CONF:
                 # Explicit control bit to apply custom Host SI settings. 
                 # It will be set to 1 and applied via set_application if 
