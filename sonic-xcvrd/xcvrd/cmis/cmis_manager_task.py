@@ -688,40 +688,46 @@ class CmisManagerTask(threading.Thread):
 
         return expired_time <= current_time
 
-    def handle_cmis_inserted_state(self, lport, api, host_lane_count, speed, subport):
+    def handle_cmis_inserted_state(self, lport):
+        port_info = self.port_dict[lport]
+        api = port_info.get('api')
+        host_lane_count = port_info.get('host_lane_count')
+        speed = port_info.get('speed')
+        subport = port_info.get('subport')
         is_fast_reboot = common.is_fast_reboot_enabled()
-        self.port_dict[lport]['appl'] = common.get_cmis_application_desired(api, host_lane_count, speed)
-        if self.port_dict[lport]['appl'] is None:
+
+        port_info['appl'] = common.get_cmis_application_desired(api, host_lane_count, speed)
+        if port_info['appl'] is None:
             self.log_error("{}: no suitable app for the port appl {} host_lane_count {} "
-                            "host_speed {}".format(lport, appl, host_lane_count, speed))
+                            "host_speed {}".format(lport, port_info['appl'], host_lane_count, speed))
             self.update_port_transceiver_status_table_sw_cmis_state(lport, CMIS_STATE_FAILED)
             return
-        appl = self.port_dict[lport]['appl']
+        appl = port_info['appl']
         self.log_notice("{}: Setting appl={}".format(lport, appl))
 
-        self.port_dict[lport]['host_lanes_mask'] = self.get_cmis_host_lanes_mask(api,
+        port_info['host_lanes_mask'] = self.get_cmis_host_lanes_mask(api,
                                                         appl, host_lane_count, subport)
-        if self.port_dict[lport]['host_lanes_mask'] <= 0:
+        if port_info['host_lanes_mask'] <= 0:
             self.log_error("{}: Invalid lane mask received - host_lane_count {} subport {} "
                             "appl {}!".format(lport, host_lane_count, subport, appl))
             self.update_port_transceiver_status_table_sw_cmis_state(lport, CMIS_STATE_FAILED)
             return
-        host_lanes_mask = self.port_dict[lport]['host_lanes_mask']
+        host_lanes_mask = port_info['host_lanes_mask']
         self.log_notice("{}: Setting host_lanemask=0x{:x}".format(lport, host_lanes_mask))
 
-        self.port_dict[lport]['media_lane_count'] = int(api.get_media_lane_count(appl))
-        self.port_dict[lport]['media_lane_assignment_options'] = int(api.get_media_lane_assignment_option(appl))
-        media_lane_count = self.port_dict[lport]['media_lane_count']
-        media_lane_assignment_options = self.port_dict[lport]['media_lane_assignment_options']
-        self.port_dict[lport]['media_lanes_mask'] = self.get_cmis_media_lanes_mask(api,
+        port_info['media_lane_count'] = int(api.get_media_lane_count(appl))
+        port_info['media_lane_assignment_options'] = int(api.get_media_lane_assignment_option(appl))
+        media_lane_count = port_info['media_lane_count']
+        media_lane_assignment_options = port_info['media_lane_assignment_options']
+        port_info['media_lanes_mask'] = self.get_cmis_media_lanes_mask(api,
                                                         appl, lport, subport)
-        if self.port_dict[lport]['media_lanes_mask'] <= 0:
+        if port_info['media_lanes_mask'] <= 0:
             self.log_error("{}: Invalid media lane mask received - media_lane_count {} "
                             "media_lane_assignment_options {} subport {}"
                             " appl {}!".format(lport, media_lane_count, media_lane_assignment_options, subport, appl))
             self.update_port_transceiver_status_table_sw_cmis_state(lport, CMIS_STATE_FAILED)
             return
-        media_lanes_mask = self.port_dict[lport]['media_lanes_mask']
+        media_lanes_mask = port_info['media_lanes_mask']
         self.log_notice("{}: Setting media_lanemask=0x{:x}".format(lport, media_lanes_mask))
 
         if self.is_decommission_required(api, appl):
@@ -729,9 +735,9 @@ class CmisManagerTask(threading.Thread):
 
         if self.is_decomm_lead_lport(lport):
             # Set all the DP lanes AppSel to unused(0) when non default app code needs to be configured
-            self.port_dict[lport]['appl'] = appl = 0
-            self.port_dict[lport]['host_lanes_mask'] = host_lanes_mask = self.ALL_LANES_MASK
-            self.port_dict[lport]['media_lanes_mask'] = self.ALL_LANES_MASK
+            port_info['appl'] = appl = 0
+            port_info['host_lanes_mask'] = host_lanes_mask = self.ALL_LANES_MASK
+            port_info['media_lanes_mask'] = self.ALL_LANES_MASK
             self.log_notice("{}: DECOMMISSION: setting appl={} and "
                             "host_lanes_mask/media_lanes_mask={:#x}".format(lport, appl, self.ALL_LANES_MASK))
             # Skip rest of the deinit/pre-init when this is the lead logical port for decommission
@@ -747,15 +753,15 @@ class CmisManagerTask(threading.Thread):
                             "{}".format(lport, decomm_status_str))
             return
 
-        if self.port_dict[lport]['host_tx_ready'] != 'true' or \
-                self.port_dict[lport]['admin_status'] != 'up':
+        if port_info['host_tx_ready'] != 'true' or \
+                port_info['admin_status'] != 'up':
             if is_fast_reboot and self.check_datapath_state(api, host_lanes_mask, ['DataPathActivated']):
                 self.log_notice("{} Skip datapath re-init in fast-reboot".format(lport))
             else:
                 self.log_notice("{} Forcing Tx laser OFF".format(lport))
                 # Force DataPath re-init
                 api.tx_disable_channel(media_lanes_mask, True)
-                self.port_dict[lport]['forced_tx_disabled'] = True
+                port_info['forced_tx_disabled'] = True
                 txoff_duration = self.get_cmis_dp_tx_turnoff_duration_secs(api)
                 self.log_notice("{}: Tx turn off duration {} secs".format(lport, txoff_duration))
                 self.update_cmis_state_expiration_time(lport, txoff_duration)
@@ -763,6 +769,7 @@ class CmisManagerTask(threading.Thread):
             self.update_port_transceiver_status_table_sw_cmis_state(lport, CMIS_STATE_READY)
             return
         self.update_port_transceiver_status_table_sw_cmis_state(lport, CMIS_STATE_DP_PRE_INIT_CHECK)
+
 
     def process_cmis_state_machine(self, lport):
         port_info = self.port_dict[lport]
@@ -803,7 +810,7 @@ class CmisManagerTask(threading.Thread):
         try:
             # CMIS state transitions
             if state == CMIS_STATE_INSERTED:
-                self.handle_cmis_inserted_state(lport, api, host_lane_count, speed, subport)
+                self.handle_cmis_inserted_state(lport)
             if state == CMIS_STATE_DP_PRE_INIT_CHECK:
                 if self.port_dict[lport].get('forced_tx_disabled', False):
                     # Ensure that Tx is OFF
