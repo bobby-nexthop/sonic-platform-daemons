@@ -157,7 +157,6 @@ class CmisManagerTask(threading.Thread):
     def get_cmis_module_power_down_duration_secs(self, api):
         return api.get_module_pwr_down_duration()/1000
 
->>>>>>> 77b86d4 (Move CmisManagerTask into it's own module)
     def get_cmis_host_lanes_mask(self, api, appl, host_lane_count, subport):
         """
         Retrieves mask of active host lanes based on appl, host lane count and subport
@@ -890,7 +889,6 @@ class CmisManagerTask(threading.Thread):
                             ec = 1
 
                 # D.1.3 Software Configuration and Initialization
-                breakpoint()
                 api.set_application(host_lanes_mask, appl, ec)
                 if not api.scs_apply_datapath_init(host_lanes_mask):
                     self.log_notice("{}: unable to set application and stage DP init".format(lport))
