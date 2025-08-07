@@ -971,6 +971,25 @@ class CmisManagerTask(threading.Thread):
         self.update_cmis_state_expiration_time(lport, dpInitDuration)
         self.update_port_transceiver_status_table_sw_cmis_state(lport, CMIS_STATE_DP_TXON)
 
+    def handle_cmis_dp_txon_state(self, lport):
+        port_info = self.port_dict[lport]
+        api = port_info.get('api')
+        host_lanes_mask = port_info.get('host_lanes_mask', 0)
+        expired = port_info.get('cmis_expired')
+        retries = port_info.get('cmis_retries', 0)
+
+        if not self.check_datapath_state(api, host_lanes_mask, ['DataPathInitialized']):
+            if self.is_timer_expired(expired):
+                self.log_notice("{}: timeout for 'DataPathInitialized'".format(lport))
+                self.force_cmis_reinit(lport, retries + 1)
+            return
+
+        # Turn ON the laser
+        media_lanes_mask = port_info['media_lanes_mask']
+        api.tx_disable_channel(media_lanes_mask, False)
+        self.log_notice("{}: Turning ON tx power".format(lport))
+        self.update_port_transceiver_status_table_sw_cmis_state(lport, CMIS_STATE_DP_ACTIVATE)
+
     def process_cmis_state_machine(self, lport):
         port_info = self.port_dict[lport]
         state = common.get_cmis_state_from_state_db(lport, self.xcvr_table_helper.get_status_sw_tbl(self.get_asic_id(lport)))
@@ -1020,17 +1039,7 @@ class CmisManagerTask(threading.Thread):
             elif state == CMIS_STATE_DP_INIT:
                 self.handle_cmis_dp_init_state(lport)
             elif state == CMIS_STATE_DP_TXON:
-                if not self.check_datapath_state(api, host_lanes_mask, ['DataPathInitialized']):
-                    if self.is_timer_expired(expired):
-                        self.log_notice("{}: timeout for 'DataPathInitialized'".format(lport))
-                        self.force_cmis_reinit(lport, retries + 1)
-                    return
-
-                # Turn ON the laser
-                media_lanes_mask = self.port_dict[lport]['media_lanes_mask']
-                api.tx_disable_channel(media_lanes_mask, False)
-                self.log_notice("{}: Turning ON tx power".format(lport))
-                self.update_port_transceiver_status_table_sw_cmis_state(lport, CMIS_STATE_DP_ACTIVATE)
+                self.handle_cmis_dp_txon_state(lport)
             elif state == CMIS_STATE_DP_ACTIVATE:
                 # Use dpInitDuration instead of MaxDurationDPTxTurnOn because
                 # some modules rely on dpInitDuration to turn on the Tx signal.
