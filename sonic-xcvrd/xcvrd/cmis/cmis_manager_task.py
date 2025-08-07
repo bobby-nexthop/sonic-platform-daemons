@@ -990,22 +990,40 @@ class CmisManagerTask(threading.Thread):
         self.log_notice("{}: Turning ON tx power".format(lport))
         self.update_port_transceiver_status_table_sw_cmis_state(lport, CMIS_STATE_DP_ACTIVATE)
 
+    def handle_cmis_dp_activate_state(self, lport):
+        # Retrieve needed variables from port_dict
+        port_info = self.port_dict[lport]
+        api = port_info.get('api')
+        host_lanes_mask = port_info.get('host_lanes_mask', 0)
+        expired = port_info.get('cmis_expired')
+        retries = port_info.get('cmis_retries', 0)
+
+        # Use dpInitDuration instead of MaxDurationDPTxTurnOn because
+        # some modules rely on dpInitDuration to turn on the Tx signal.
+        # This behavior deviates from the CMIS spec but is honored
+        # to prevent old modules from breaking with new sonic
+        if not self.check_datapath_state(api, host_lanes_mask, ['DataPathActivated']):
+            if self.is_timer_expired(expired):
+                self.log_notice("{}: timeout for 'DataPathActivated'".format(lport))
+                self.force_cmis_reinit(lport, retries + 1)
+            return
+
+        self.log_notice("{}: READY".format(lport))
+        self.update_port_transceiver_status_table_sw_cmis_state(lport, CMIS_STATE_READY)
+        self.post_port_active_apsel_to_db(api, lport, host_lanes_mask)
+
     def process_cmis_state_machine(self, lport):
         port_info = self.port_dict[lport]
         state = common.get_cmis_state_from_state_db(lport, self.xcvr_table_helper.get_status_sw_tbl(self.get_asic_id(lport)))
         speed = port_info.get('speed')
         api = port_info.get('api')
         host_lane_count = port_info.get('host_lane_count')
-        subport = port_info.get('subport')
-        pport = port_info.get('pport')
-        sfp = port_info.get('sfp')
 
         # CMIS expiration and retries
         #
         # A retry should always start over at INSETRTED state, while the
         # expiration will reset the state to INSETRTED and advance the
         # retry counter
-        expired = port_info.get('cmis_expired')
         retries = port_info.get('cmis_retries', 0)
         host_lanes_mask = port_info.get('host_lanes_mask', 0)
         appl = port_info.get('appl', 0)
@@ -1041,20 +1059,7 @@ class CmisManagerTask(threading.Thread):
             elif state == CMIS_STATE_DP_TXON:
                 self.handle_cmis_dp_txon_state(lport)
             elif state == CMIS_STATE_DP_ACTIVATE:
-                # Use dpInitDuration instead of MaxDurationDPTxTurnOn because
-                # some modules rely on dpInitDuration to turn on the Tx signal.
-                # This behavior deviates from the CMIS spec but is honored
-                # to prevent old modules from breaking with new sonic
-                if not self.check_datapath_state(api, host_lanes_mask, ['DataPathActivated']):
-                    if self.is_timer_expired(expired):
-                        self.log_notice("{}: timeout for 'DataPathActivated'".format(lport))
-                        self.force_cmis_reinit(lport, retries + 1)
-                    return
-
-                self.log_notice("{}: READY".format(lport))
-                self.update_port_transceiver_status_table_sw_cmis_state(lport, CMIS_STATE_READY)
-                self.post_port_active_apsel_to_db(api, lport, host_lanes_mask)
-
+                self.handle_cmis_dp_activate_state(lport)
         except Exception as e:
             self.log_error("{}: internal errors due to {}".format(lport, e))
             common.log_exception_traceback()
