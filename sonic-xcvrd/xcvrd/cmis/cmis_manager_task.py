@@ -926,6 +926,51 @@ class CmisManagerTask(threading.Thread):
         self.log_notice("{}: DpDeinit duration {} secs, modulePwrUp duration {} secs".format(lport, dpDeinitDuration, modulePwrUpDuration))
         self.update_cmis_state_expiration_time(lport, max(modulePwrUpDuration, dpDeinitDuration))
 
+    def handle_cmis_dp_init_state(self, lport):
+        port_info = self.port_dict[lport]
+        api = port_info.get('api')
+        host_lanes_mask = port_info.get('host_lanes_mask', 0)
+        expired = port_info.get('cmis_expired')
+        retries = port_info.get('cmis_retries', 0)
+
+        if not self.check_config_error(api, host_lanes_mask, ['ConfigSuccess']):
+            if self.is_timer_expired(expired):
+                self.log_notice("{}: timeout for 'ConfigSuccess', current ConfigStatus: "
+                                "{}".format(lport, list(api.get_config_datapath_hostlane_status().values())))
+                self.force_cmis_reinit(lport, retries + 1)
+            return
+
+        # Clear decommission status and invoke CMIS reinit so that normal CMIS initialization can begin
+        if self.is_decomm_pending(lport):
+            self.log_notice("{}: DECOMMISSION: done for physical port {}".format(lport, port_info['index']))
+            self.clear_decomm_pending(lport)
+            self.force_cmis_reinit(lport)
+            return
+
+        if hasattr(api, 'get_cmis_rev'):
+            # Check datapath init pending on module that supports CMIS 5.x
+            majorRev = int(api.get_cmis_rev().split('.')[0])
+            if majorRev >= 5 and not self.check_datapath_init_pending(api, host_lanes_mask):
+                self.log_notice("{}: datapath init not pending".format(lport))
+                self.force_cmis_reinit(lport, retries + 1)
+                return
+
+        # Ensure the Datapath is NOT Activated unless the host Tx siganl is good.
+        # NOTE: Some CMIS compliant modules may have 'auto-squelch' feature where
+        # the module won't take datapaths to Activated state if host tries to enable
+        # the datapaths while there is no good Tx signal from the host-side.
+        if port_info['admin_status'] != 'up' or \
+                port_info['host_tx_ready'] != 'true':
+            self.log_notice("{} waiting for host tx ready...".format(lport))
+            return
+
+        # D.1.3 Software Configuration and Initialization
+        api.set_datapath_init(host_lanes_mask)
+        dpInitDuration = self.get_cmis_dp_init_duration_secs(api)
+        self.log_notice("{}: DpInit duration {} secs".format(lport, dpInitDuration))
+        self.update_cmis_state_expiration_time(lport, dpInitDuration)
+        self.update_port_transceiver_status_table_sw_cmis_state(lport, CMIS_STATE_DP_TXON)
+
     def process_cmis_state_machine(self, lport):
         port_info = self.port_dict[lport]
         state = common.get_cmis_state_from_state_db(lport, self.xcvr_table_helper.get_status_sw_tbl(self.get_asic_id(lport)))
@@ -973,43 +1018,7 @@ class CmisManagerTask(threading.Thread):
             elif state == CMIS_STATE_AP_CONF:
                 self.handle_cmis_ap_conf_state(lport)
             elif state == CMIS_STATE_DP_INIT:
-                if not self.check_config_error(api, host_lanes_mask, ['ConfigSuccess']):
-                    if self.is_timer_expired(expired):
-                        self.log_notice("{}: timeout for 'ConfigSuccess', current ConfigStatus: "
-                                        "{}".format(lport, list(api.get_config_datapath_hostlane_status().values())))
-                        self.force_cmis_reinit(lport, retries + 1)
-                    return
-
-                # Clear decommission status and invoke CMIS reinit so that normal CMIS initialization can begin
-                if self.is_decomm_pending(lport):
-                    self.log_notice("{}: DECOMMISSION: done for physical port {}".format(lport, self.port_dict[lport]['index']))
-                    self.clear_decomm_pending(lport)
-                    self.force_cmis_reinit(lport)
-                    return
-
-                if hasattr(api, 'get_cmis_rev'):
-                    # Check datapath init pending on module that supports CMIS 5.x
-                    majorRev = int(api.get_cmis_rev().split('.')[0])
-                    if majorRev >= 5 and not self.check_datapath_init_pending(api, host_lanes_mask):
-                        self.log_notice("{}: datapath init not pending".format(lport))
-                        self.force_cmis_reinit(lport, retries + 1)
-                        return
-
-                # Ensure the Datapath is NOT Activated unless the host Tx siganl is good.
-                # NOTE: Some CMIS compliant modules may have 'auto-squelch' feature where
-                # the module won't take datapaths to Activated state if host tries to enable
-                # the datapaths while there is no good Tx signal from the host-side.
-                if self.port_dict[lport]['admin_status'] != 'up' or \
-                        self.port_dict[lport]['host_tx_ready'] != 'true':
-                    self.log_notice("{} waiting for host tx ready...".format(lport))
-                    return
-
-                # D.1.3 Software Configuration and Initialization
-                api.set_datapath_init(host_lanes_mask)
-                dpInitDuration = self.get_cmis_dp_init_duration_secs(api)
-                self.log_notice("{}: DpInit duration {} secs".format(lport, dpInitDuration))
-                self.update_cmis_state_expiration_time(lport, dpInitDuration)
-                self.update_port_transceiver_status_table_sw_cmis_state(lport, CMIS_STATE_DP_TXON)
+                self.handle_cmis_dp_init_state(lport)
             elif state == CMIS_STATE_DP_TXON:
                 if not self.check_datapath_state(api, host_lanes_mask, ['DataPathInitialized']):
                     if self.is_timer_expired(expired):
