@@ -770,6 +770,64 @@ class CmisManagerTask(threading.Thread):
             return
         self.update_port_transceiver_status_table_sw_cmis_state(lport, CMIS_STATE_DP_PRE_INIT_CHECK)
 
+    def handle_cmis_dp_pre_init_check_state(self, lport):
+        # Retrieve needed variables from port_dict
+        port_info = self.port_dict[lport]
+        api = port_info.get('api')
+        appl = port_info.get('appl', 0)
+        host_lanes_mask = port_info.get('host_lanes_mask', 0)
+        expired = port_info.get('cmis_expired')
+        retries = port_info.get('cmis_retries', 0)
+
+        if port_info.get('forced_tx_disabled', False):
+            # Ensure that Tx is OFF
+            # Transceiver will remain in DataPathDeactivated state while it is in Low Power Mode (even if Tx is disabled)
+            # Transceiver will enter DataPathInitialized state if Tx was disabled after CMIS initialization was completed
+            if not self.check_datapath_state(api, host_lanes_mask, ['DataPathDeactivated', 'DataPathInitialized']):
+                if self.is_timer_expired(expired):
+                    self.log_notice("{}: timeout for 'DataPathDeactivated/DataPathInitialized'".format(lport))
+                    self.force_cmis_reinit(lport, retries + 1)
+                return
+            port_info['forced_tx_disabled'] = False
+            self.log_notice("{}: Tx laser is successfully turned OFF".format(lport))
+
+        # Configure the target output power if ZR module
+        if api.is_coherent_module():
+            tx_power = port_info['tx_power']
+            # Prevent configuring same tx power multiple times
+            if 0 != tx_power and tx_power != api.get_tx_config_power():
+                if 1 != self.configure_tx_output_power(api, lport, tx_power):
+                    self.log_error("{} failed to configure Tx power = {}".format(lport, tx_power))
+                else:
+                    self.log_notice("{} Successfully configured Tx power = {}".format(lport, tx_power))
+
+        need_update = self.is_cmis_application_update_required(api, appl, host_lanes_mask)
+
+        # For ZR module, Datapath needes to be re-initlialized on new channel selection
+        if api.is_coherent_module():
+            freq = port_info['laser_freq']
+            # If user requested frequency is NOT the same as configured on the module
+            # force datapath re-initialization
+            if 0 != freq and freq != api.get_laser_config_freq():
+                if self.validate_frequency_and_grid(api, lport, freq) == True:
+                    need_update = True
+                else:
+                    # clear setting of invalid frequency config
+                    port_info['laser_freq'] = 0
+
+        if not need_update:
+            # No application updates
+            # As part of xcvrd restart, the TRANSCEIVER_INFO table is deleted and
+            # created with default value of 'N/A' for all the active apsel fields.
+            # The below (post_port_active_apsel_to_db) will ensure that the
+            # active apsel fields are updated correctly in the DB since
+            # the CMIS state remains unchanged during xcvrd restart
+            self.post_port_active_apsel_to_db(api, lport, host_lanes_mask)
+            self.log_notice("{}: no CMIS application update required...READY".format(lport))
+            self.update_port_transceiver_status_table_sw_cmis_state(lport, CMIS_STATE_READY)
+            return
+        self.log_notice("{}: force Datapath reinit".format(lport))
+        self.update_port_transceiver_status_table_sw_cmis_state(lport, CMIS_STATE_DP_DEINIT)
 
     def process_cmis_state_machine(self, lport):
         port_info = self.port_dict[lport]
@@ -812,55 +870,7 @@ class CmisManagerTask(threading.Thread):
             if state == CMIS_STATE_INSERTED:
                 self.handle_cmis_inserted_state(lport)
             if state == CMIS_STATE_DP_PRE_INIT_CHECK:
-                if self.port_dict[lport].get('forced_tx_disabled', False):
-                    # Ensure that Tx is OFF
-                    # Transceiver will remain in DataPathDeactivated state while it is in Low Power Mode (even if Tx is disabled)
-                    # Transceiver will enter DataPathInitialized state if Tx was disabled after CMIS initialization was completed
-                    if not self.check_datapath_state(api, host_lanes_mask, ['DataPathDeactivated', 'DataPathInitialized']):
-                        if self.is_timer_expired(expired):
-                            self.log_notice("{}: timeout for 'DataPathDeactivated/DataPathInitialized'".format(lport))
-                            self.force_cmis_reinit(lport, retries + 1)
-                        return
-                    self.port_dict[lport]['forced_tx_disabled'] = False
-                    self.log_notice("{}: Tx laser is successfully turned OFF".format(lport))
-
-                # Configure the target output power if ZR module
-                if api.is_coherent_module():
-                    tx_power = self.port_dict[lport]['tx_power']
-                    # Prevent configuring same tx power multiple times
-                    if 0 != tx_power and tx_power != api.get_tx_config_power():
-                        if 1 != self.configure_tx_output_power(api, lport, tx_power):
-                            self.log_error("{} failed to configure Tx power = {}".format(lport, tx_power))
-                        else:
-                            self.log_notice("{} Successfully configured Tx power = {}".format(lport, tx_power))
-
-                need_update = self.is_cmis_application_update_required(api, appl, host_lanes_mask)
-
-                # For ZR module, Datapath needes to be re-initlialized on new channel selection
-                if api.is_coherent_module():
-                    freq = self.port_dict[lport]['laser_freq']
-                    # If user requested frequency is NOT the same as configured on the module
-                    # force datapath re-initialization
-                    if 0 != freq and freq != api.get_laser_config_freq():
-                        if self.validate_frequency_and_grid(api, lport, freq) == True:
-                            need_update = True
-                        else:
-                            # clear setting of invalid frequency config
-                            self.port_dict[lport]['laser_freq'] = 0
-
-                if not need_update:
-                    # No application updates
-                    # As part of xcvrd restart, the TRANSCEIVER_INFO table is deleted and
-                    # created with default value of 'N/A' for all the active apsel fields.
-                    # The below (post_port_active_apsel_to_db) will ensure that the
-                    # active apsel fields are updated correctly in the DB since
-                    # the CMIS state remains unchanged during xcvrd restart
-                    self.post_port_active_apsel_to_db(api, lport, host_lanes_mask)
-                    self.log_notice("{}: no CMIS application update required...READY".format(lport))
-                    self.update_port_transceiver_status_table_sw_cmis_state(lport, CMIS_STATE_READY)
-                    return
-                self.log_notice("{}: force Datapath reinit".format(lport))
-                self.update_port_transceiver_status_table_sw_cmis_state(lport, CMIS_STATE_DP_DEINIT)
+                self.handle_cmis_dp_pre_init_check_state(lport)
             elif state == CMIS_STATE_DP_DEINIT:
                 # D.2.2 Software Deinitialization
                 api.set_datapath_deinit(host_lanes_mask)
