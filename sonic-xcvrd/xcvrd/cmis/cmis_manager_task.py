@@ -828,6 +828,80 @@ class CmisManagerTask(threading.Thread):
         self.log_notice("{}: force Datapath reinit".format(lport))
         self.update_port_transceiver_status_table_sw_cmis_state(lport, CMIS_STATE_DP_DEINIT)
 
+    def handle_cmis_ap_conf_state(self, lport):
+        port_info = self.port_dict[lport]
+        api = port_info.get('api')
+        expired = port_info.get('cmis_expired')
+        retries = port_info.get('cmis_retries', 0)
+        host_lanes_mask = port_info.get('host_lanes_mask', 0)
+        speed = port_info.get('speed')
+        host_lane_count = port_info.get('host_lane_count')
+        pport = port_info.get('pport')
+        sfp = port_info.get('sfp')
+        appl = port_info.get('appl', 0)
+
+        # Explicit control bit to apply custom Host SI settings.
+        # It will be set to 1 and applied via set_application if
+        # custom SI settings is applicable
+        ec = 0
+
+        # TODO: Use fine grained time when the CMIS memory map is available
+        if not self.check_module_state(api, ['ModuleReady']):
+            if self.is_timer_expired(expired):
+                self.log_notice("{}: timeout for 'ModuleReady'".format(lport))
+                self.force_cmis_reinit(lport, retries + 1)
+            return
+
+        if not self.check_datapath_state(api, host_lanes_mask, ['DataPathDeactivated']):
+            if self.is_timer_expired(expired):
+                self.log_notice("{}: timeout for 'DataPathDeactivated state'".format(lport))
+                self.force_cmis_reinit(lport, retries + 1)
+            return
+
+        # Skip rest if it's in decommission state machine
+        if not self.is_decomm_pending(lport):
+            if api.is_coherent_module():
+            # For ZR module, configure the laser frequency when Datapath is in Deactivated state
+                freq = port_info['laser_freq']
+                if 0 != freq:
+                    if 1 != self.configure_laser_frequency(api, lport, freq):
+                        self.log_error("{} failed to configure laser frequency {} GHz".format(lport, freq))
+                    else:
+                        self.log_notice("{} configured laser frequency {} GHz".format(lport, freq))
+
+            # Stage custom SI settings
+            if optics_si_parser.optics_si_present():
+                optics_si_dict = {}
+                # Apply module SI settings if applicable
+                lane_speed = int(speed/1000)//host_lane_count
+                optics_si_dict = optics_si_parser.fetch_optics_si_setting(pport, lane_speed, sfp)
+
+                self.log_debug("Read SI parameters for port {} from optics_si_settings.json vendor file:".format(lport))
+                for key, sub_dict in optics_si_dict.items():
+                    self.log_debug("{}".format(key))
+                    for sub_key, value in sub_dict.items():
+                        self.log_debug("{}: {}".format(sub_key, str(value)))
+
+                if optics_si_dict:
+                    self.log_notice("{}: Apply Optics SI found for Vendor: {}  PN: {} lane speed: {}G".
+                                    format(lport, api.get_manufacturer(), api.get_model(), lane_speed))
+                    if not api.stage_custom_si_settings(host_lanes_mask, optics_si_dict):
+                        self.log_notice("{}: unable to stage custom SI settings ".format(lport))
+                        self.force_cmis_reinit(lport, retries + 1)
+                        return
+
+                    # Set Explicit control bit to apply Custom Host SI settings
+                    ec = 1
+
+        # D.1.3 Software Configuration and Initialization
+        api.set_application(host_lanes_mask, appl, ec)
+        if not api.scs_apply_datapath_init(host_lanes_mask):
+            self.log_notice("{}: unable to set application and stage DP init".format(lport))
+            self.force_cmis_reinit(lport, retries + 1)
+            return
+
+        self.update_port_transceiver_status_table_sw_cmis_state(lport, CMIS_STATE_DP_INIT)
+
     def handle_cmis_dp_deinit_state(self, lport):
         port_info = self.port_dict[lport]
         api = port_info.get('api')
@@ -897,67 +971,7 @@ class CmisManagerTask(threading.Thread):
             elif state == CMIS_STATE_DP_DEINIT:
                 self.handle_cmis_dp_deinit_state(lport)
             elif state == CMIS_STATE_AP_CONF:
-                # Explicit control bit to apply custom Host SI settings. 
-                # It will be set to 1 and applied via set_application if 
-                # custom SI settings is applicable
-                ec = 0
-
-                # TODO: Use fine grained time when the CMIS memory map is available
-                if not self.check_module_state(api, ['ModuleReady']):
-                    if self.is_timer_expired(expired):
-                        self.log_notice("{}: timeout for 'ModuleReady'".format(lport))
-                        self.force_cmis_reinit(lport, retries + 1)
-                    return
-
-                if not self.check_datapath_state(api, host_lanes_mask, ['DataPathDeactivated']):
-                    if self.is_timer_expired(expired):
-                        self.log_notice("{}: timeout for 'DataPathDeactivated state'".format(lport))
-                        self.force_cmis_reinit(lport, retries + 1)
-                    return
-
-                # Skip rest if it's in decommission state machine
-                if not self.is_decomm_pending(lport):
-                    if api.is_coherent_module():
-                    # For ZR module, configure the laser frequency when Datapath is in Deactivated state
-                        freq = self.port_dict[lport]['laser_freq']
-                        if 0 != freq:
-                            if 1 != self.configure_laser_frequency(api, lport, freq):
-                                self.log_error("{} failed to configure laser frequency {} GHz".format(lport, freq))
-                            else:
-                                self.log_notice("{} configured laser frequency {} GHz".format(lport, freq))
-
-                    # Stage custom SI settings
-                    if optics_si_parser.optics_si_present():
-                        optics_si_dict = {}
-                        # Apply module SI settings if applicable
-                        lane_speed = int(speed/1000)//host_lane_count
-                        optics_si_dict = optics_si_parser.fetch_optics_si_setting(pport, lane_speed, sfp)
-
-                        self.log_debug("Read SI parameters for port {} from optics_si_settings.json vendor file:".format(lport))
-                        for key, sub_dict in optics_si_dict.items():
-                            self.log_debug("{}".format(key))
-                            for sub_key, value in sub_dict.items():
-                                self.log_debug("{}: {}".format(sub_key, str(value)))
-
-                        if optics_si_dict:
-                            self.log_notice("{}: Apply Optics SI found for Vendor: {}  PN: {} lane speed: {}G".
-                                            format(lport, api.get_manufacturer(), api.get_model(), lane_speed))
-                            if not api.stage_custom_si_settings(host_lanes_mask, optics_si_dict):
-                                self.log_notice("{}: unable to stage custom SI settings ".format(lport))
-                                self.force_cmis_reinit(lport, retries + 1)
-                                return
-
-                            # Set Explicit control bit to apply Custom Host SI settings
-                            ec = 1
-
-                # D.1.3 Software Configuration and Initialization
-                api.set_application(host_lanes_mask, appl, ec)
-                if not api.scs_apply_datapath_init(host_lanes_mask):
-                    self.log_notice("{}: unable to set application and stage DP init".format(lport))
-                    self.force_cmis_reinit(lport, retries + 1)
-                    return
-
-                self.update_port_transceiver_status_table_sw_cmis_state(lport, CMIS_STATE_DP_INIT)
+                self.handle_cmis_ap_conf_state(lport)
             elif state == CMIS_STATE_DP_INIT:
                 if not self.check_config_error(api, host_lanes_mask, ['ConfigSuccess']):
                     if self.is_timer_expired(expired):
